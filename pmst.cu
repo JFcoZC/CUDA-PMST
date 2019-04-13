@@ -4,7 +4,7 @@
 #include <stdlib.h>
 
 //VARIABLES GLOBALES
-#define NUMVERTICES 10
+#define NUMVERTICES 5
 #define MAXTRHEADSXBLOCK 32
 
 //ID gpudevice that is used
@@ -94,7 +94,7 @@ void setGraph()
     }//Fin for 1
 
     //!!!SAVE IN GLOBAL VARIABLE!!!
-    NUMBEREDGES = numberEdges
+    NUMBEREDGES = numberEdges;
 
     //----------------
     printf("-- Source Vertex --\n");
@@ -165,6 +165,23 @@ void setVariables()
     R2destination = (int *)calloc(NUMVERTICES-1,NUMVERTICES-1*sizeof(int));
     R3weigth = (int *)calloc(NUMVERTICES-1,NUMVERTICES-1*sizeof(int));
 
+    //Look for the actual weights in VE and VG
+    //for the source and destination and in case
+    //of not being found asign 0 as the weight
+    int numDestinations = VG[C+NUMVERTICES];
+
+    int startIndex = 0;
+    for(int k = 0; k < C; k++)
+    {
+        startIndex = startIndex+VG[k+NUMVERTICES];
+    }//End for
+
+    numDestinations = numDestinations+startIndex;
+
+    //----------
+    //printf("Range of values in EG(%i - %i)\n", startIndex, numDestinations);
+    //----------
+    
     //Set by default all the edges taking as the origin 
     //the root source, to all posible destinations
     int indxValidDestinations = -1;
@@ -175,32 +192,24 @@ void setVariables()
         //and destination are equal
         if(C != i)
         {
+            indxValidDestinations++;
+
             //Set source index
             R1source[indxValidDestinations] = C;
-
-            indxValidDestinations++;
             R2destination[indxValidDestinations] = i;
-
-            //Look for the actual weights in VE and VG
-            //for the source and destination and in case
-            //of not being found asign 0 as the weight
-            int numDestinations = VG[i+NUMVERTICES];
-
-            int startIndex = 0;
-            for(int k = 0; k < i; k++)
-            {
-                startIndex = startIndex+VG[k+NUMVERTICES]
-            }//End for
 
             //Recorrer solamente los destinos para el source
             for(int j = startIndex; j < numDestinations; j++)
             {
-                int idDestino = VE[j];
+                int idDestino = EG[j];
 
                 //Se encontro el destino .:. poner peso correspondiente
+                //----------
+                //printf("%i == %i\n", idDestino, i);
+                //----------
                 if(idDestino == i)
                 {
-                    R3weigth[indxValidDestinations] = VE[j+NUMBEREDGES];
+                    R3weigth[indxValidDestinations] = EG[j+NUMBEREDGES];
                 }//End if
 
             }//End for 2
@@ -210,37 +219,104 @@ void setVariables()
 
     }//Fin for 1
 
+    //--------------
+    //Recordar que para el print se considera un elemento menos
+    //del limite superior ya que realmnete hace el print hasta
+    //la posicion indicada
+    //printf("R1: \n");
+    //printArrayRange(R1source,0,NUMVERTICES-2);
+    //printf("R2: \n");
+    //printArrayRange(R2destination,0,NUMVERTICES-2);
+    //printf("R3: \n");
+    //printArrayRange(R3weigth,0,NUMVERTICES-2);
+    //--------------
 
-    //Define and construct T1 and T2? HERE
-    //
 
 }//End fucntions setVariables
 //--------------------------------
-void kernel1(int *v, int *e, int *r1, int * r2, int *r3, int c)
+__global__ void kernel1(int *v, int *e, int *r1, int * r2, int *r3, int *c, int *t1, int *t2)
 {
     //Define and construct T1 and T2
-    T1 = (int *)calloc(MAZTRHEADSXBLOCK,MAZTRHEADSXBLOCK*sizeof(int));
-    T2 = (int *)calloc(MAZTRHEADSXBLOCK,MAZTRHEADSXBLOCK*sizeof(int));
+    //T1weights = (int *)calloc(MAXTRHEADSXBLOCK,MAXTRHEADSXBLOCK*sizeof(int));
+    //T2indexes = (int *)calloc(MAXTRHEADSXBLOCK,MAXTRHEADSXBLOCK*sizeof(int));
+
+    int idBloque = blockIdx.x;
+    //ID de cada hilo (IDHILOBLOQUE+IDBLOQUE*HILOSPORBLOQUE)
+    int i = threadIdx.x + idBloque*blockDim.x;
 
     //MIN REDUCTION AND WRITE RESULTS IN T1 AND T2
+
+    //1)All threads in the grid make reduction operation on an array
+    //of input data, ann obtain min weight and index of each thread
+    
+    //Solo trabajar |v|-1 hilos 
+    //V-1 porque Rs son de size |V|-1
+    if( i < NUMVERTICES-1 )
+    {
+        printf("| idh: %i | ", i);
+        printf("| %i : %i | ", r2[i], r3[i]);
+        printf(" %i < %i //", r3[i*idBloque+i], t1[idBloque]);
+        if(r3[i*idBloque+i] < t1[idBloque])
+        {
+            //Guardar Weight
+            t1[idBloque] = r3[i*idBloque+i];
+
+            //Guardar Indice
+            t2[idBloque] = r2[i*idBloque+i];
+
+        }//Nuevo menor encontrado
+
+    }//End if 
+
+
+    //2)All threads in every block make reduction of the result data in 1)
+    //And obtain the minim value and index of every thread block
 
 }//End ufnction kernel1
 //--------------------------------
 void primMST(int *v, int *e, int *r1, int * r2, int *r3, int c)
 {
     //Define size of CUDA grid
-    int g_row = (int)ceil((int)NUMBEREDGES/MAXTRHEADSXBLOCK);
-    int g_col = (int)ceil((int)NUMBEREDGES/MAXTRHEADSXBLOCK); 
+    int g_row = (int)ceil((float)NUMVERTICES/(float)MAXTRHEADSXBLOCK);
+    int g_col = (int)ceil((float)NUMVERTICES/(float)MAXTRHEADSXBLOCK); 
+    int numBloques = g_row;
     dim3 bloques(g_col,g_row);
     dim3 hilos(MAXTRHEADSXBLOCK,MAXTRHEADSXBLOCK);
 
     cudaEvent_t start, stop; 
 
+    printf("Bloques: %i == %i \n", bloques, numBloques);
+    printf("Hilos: %i \n", hilos);
     printf("Grid (%d,%d)\n", g_row, g_col); 
 
     //vARIABLES IN DEVICE
-    int *VGD, *VED, *R1D, *R2D, R3D;
-    int CD;
+    int *VGD, *VED, *R1D, *R2D, *R3D;   //Arrays
+    int *CD;                            //Variable 
+
+    //Define and construct T1 and T2? HERE
+    T1weights = (int *)calloc(numBloques,numBloques*sizeof(int));
+    T2indexes = (int *)calloc(numBloques,numBloques*sizeof(int));
+
+    //Initialize temporal weights with a very high value
+    //in order to make that any wieght is better than 
+    //the init value
+    for(int i = 0; i < numBloques; i++)
+    {
+        T1weights[i] = 99999;
+
+    }//End for 1
+
+    //--------------
+    //Recordar que para el print se considera un elemento menos
+    //del limite superior ya que realmnete hace el print hasta
+    //la posicion indicada
+    printf("R1: \n");
+    printArrayRange(r1,0,NUMVERTICES-2);
+    printf("R2: \n");
+    printArrayRange(r2,0,NUMVERTICES-2);
+    printf("R3: \n");
+    printArrayRange(r3,0,NUMVERTICES-2);
+    //--------------
 
     //TRANSFER FROM HOST (CPU) TO DEVICE GPU
     cudaSetDevice(gpudev);
@@ -249,13 +325,12 @@ void primMST(int *v, int *e, int *r1, int * r2, int *r3, int c)
     cudaEventRecord(start,0); 
 
     //1)Asignar memoria para variables en GPU
-    cudaMalloc(&VGD, NUMVERTICES*2*sizeof(int));
-    cudaMalloc(&VED, NUMBEREDGES*2*sizeof(int));
-    cudaMalloc(&R1D, NUMVERTICES-1*sizeof(int));
-    cudaMalloc(&R2D, NUMVERTICES-1*sizeof(int));
-    cudaMalloc(&R3D, NUMVERTICES-1*sizeof(int));
-    cudaMalloc(&R3D, NUMVERTICES-1*sizeof(int));
-    cudaMalloc(&CD, sizeof(int));
+    cudaMalloc(&VGD, NUMVERTICES*2*sizeof(int) );
+    cudaMalloc(&VED, NUMBEREDGES*2*sizeof(int) );
+    cudaMalloc(&R1D, (NUMVERTICES-1)*sizeof(int) );
+    cudaMalloc(&R2D, (NUMVERTICES-1)*sizeof(int) );
+    cudaMalloc(&R3D, (NUMVERTICES-1)*sizeof(int) );
+    cudaMalloc(&CD, int(sizeof(int)) );
 
     //2)Copiar datos del host al device
     cudaMemcpy(VGD,v,NUMVERTICES*2*sizeof(int),cudaMemcpyDefault);
@@ -263,20 +338,31 @@ void primMST(int *v, int *e, int *r1, int * r2, int *r3, int c)
     cudaMemcpy(R1D,r1,NUMVERTICES-1*sizeof(int),cudaMemcpyDefault);
     cudaMemcpy(R2D,r2,NUMVERTICES-1*sizeof(int),cudaMemcpyDefault);
     cudaMemcpy(R3D,r3,NUMVERTICES-1*sizeof(int),cudaMemcpyDefault);
-    cudaMemcpy(CD,c,sizeof(int),cudaMemcpyDefault);
+    cudaMemcpy(CD,&c,sizeof(int),cudaMemcpyDefault);
 
     //INICIO LOOP |NUMVERTICES|-1 VECES
 
     //3)Ejecutar kernel
     //INVOQUE KERNEL 1 AND WRITE RESULTS IN T1 AND T2
-    kernel1<<bloques, hilos>>(VGD,VED,R1D,R2D,R3D,CD);
+    kernel1<<<bloques, hilos>>>(VGD,VED,R1D,R2D,R3D,CD,T1weights,T2indexes);
 
     //4)Copiar datos del device al host
     //T1 Y T2
+    
+
+    //Verificar si se invica a Kernel 2
+    if(numBloques > 1)
+    {
+        printf("Invoke Kernel2\n");
+
+    }//End if
 
     // Valores de T1[0] y T2[0] son añadidos
     // a los correspondientes R1 Y R3
     //T2[0] sobreescribe a C
+    //---------------
+    printf("Minimum weight found: %i for vertex with ID: %i \n", T1weights[0], T2indexes[0]);
+    //---------------
 
     //FIN LOOP |NUMVERTICES|-1 VECES
 
@@ -299,11 +385,17 @@ int main(int argc, char **argv)
     setGraph();
     
     //Set root vertex of the MST
-    C = 0;
+    C = 4;
 
     setVariables();
 
-    primMST(VG,VE,R1,R2,R3,C);
+    printf("IDs threads: \n");
+    primMST(VG,EG,R1source,R2destination,R3weigth,C);
+    printf("\n");
+
+    //---------------
+    printf("Minimum weight found: %i for vertex with ID: %i \n", T1weights[0], T2indexes[0]);
+    //---------------
 
     printf("Fin del programa V1\n");
 
