@@ -3,9 +3,10 @@
 #include <math.h>
 #include <stdlib.h>
 
+//NUMERO BLOQUES = INTEGERMASALTO(NUMVERTICES/MAXTRHEADSXBLOCK)
 //VARIABLES GLOBALES
-#define NUMVERTICES 5
-#define MAXTRHEADSXBLOCK 32
+#define NUMVERTICES 32      //MAXIMUM 300
+#define MAXTRHEADSXBLOCK 32 //[1 - 32]
 
 //ID gpudevice that is used
 int gpudev = 0;
@@ -234,7 +235,7 @@ void setVariables()
 
 }//End fucntions setVariables
 //--------------------------------
-__global__ void kernel1(int *v, int *e, int *r1, int * r2, int *r3, int *c, int *t1, int *t2)
+__global__ void kernel1(int *v, int *e, int *r1, int *r2, int *r3, int *c, int *t1, int *t2)
 {
     //Define and construct T1 and T2
     //T1weights = (int *)calloc(MAXTRHEADSXBLOCK,MAXTRHEADSXBLOCK*sizeof(int));
@@ -253,20 +254,38 @@ __global__ void kernel1(int *v, int *e, int *r1, int * r2, int *r3, int *c, int 
     //V-1 porque Rs son de size |V|-1
     if( i < NUMVERTICES-1 )
     {
-        printf("| idh: %i | ", i);
-        printf("| %i : %i | ", r2[i], r3[i]);
-        printf(" %i < %i //", r3[i*idBloque+i], t1[idBloque]);
-        if(r3[i*idBloque+i] < t1[idBloque])
+        //----------------------
+        //printf("| idh: %i | ", i);
+        //printf("| %i %i | ", v[i],v[i+NUMVERTICES]);
+        //----------------------
+
+        //---------------------
+        //printf("| %i  %i : %i | ", r1[i], r2[2], r3[2]);
+        //printf(" %i < %i //", r3[i], t1[idBloque]);
+        //---------------------
+        //Con weiht mwnor al actual pero que sea un
+        //weigth valido (diferente de 0)
+        if(r3[i] < t1[idBloque] && r3[i] != 0 )
         {
             //Guardar Weight
-            t1[idBloque] = r3[i*idBloque+i];
+            t1[idBloque] = r3[i];
 
             //Guardar Indice
-            t2[idBloque] = r2[i*idBloque+i];
+            t2[idBloque] = r2[i];
 
         }//Nuevo menor encontrado
 
-    }//End if 
+    }//End if
+
+    //printf("| %i | ", r3[i]);
+
+    //i < MAXNUMBEREDGES
+    /*if(i < 15)
+    {
+                                 //[i+MAXNUMBEREDGES]
+        printf("! %i %i ! ", e[i],e[i+15]);
+
+    }//End if*/
 
 
     //2)All threads in every block make reduction of the result data in 1)
@@ -291,6 +310,7 @@ void primMST(int *v, int *e, int *r1, int * r2, int *r3, int c)
 
     //vARIABLES IN DEVICE
     int *VGD, *VED, *R1D, *R2D, *R3D;   //Arrays
+    int *T1D, *T2D;
     int *CD;                            //Variable 
 
     //Define and construct T1 and T2? HERE
@@ -330,27 +350,31 @@ void primMST(int *v, int *e, int *r1, int * r2, int *r3, int c)
     cudaMalloc(&R1D, (NUMVERTICES-1)*sizeof(int) );
     cudaMalloc(&R2D, (NUMVERTICES-1)*sizeof(int) );
     cudaMalloc(&R3D, (NUMVERTICES-1)*sizeof(int) );
+    cudaMalloc(&T1D, (numBloques)*sizeof(int) );
+    cudaMalloc(&T2D, (numBloques)*sizeof(int) );
     cudaMalloc(&CD, int(sizeof(int)) );
 
     //2)Copiar datos del host al device
     cudaMemcpy(VGD,v,NUMVERTICES*2*sizeof(int),cudaMemcpyDefault);
     cudaMemcpy(VED,e,NUMBEREDGES*2*sizeof(int),cudaMemcpyDefault);
-    cudaMemcpy(R1D,r1,NUMVERTICES-1*sizeof(int),cudaMemcpyDefault);
-    cudaMemcpy(R2D,r2,NUMVERTICES-1*sizeof(int),cudaMemcpyDefault);
-    cudaMemcpy(R3D,r3,NUMVERTICES-1*sizeof(int),cudaMemcpyDefault);
+    cudaMemcpy(R1D,r1,(NUMVERTICES-1)*sizeof(int),cudaMemcpyDefault);
+    cudaMemcpy(R2D,r2,(NUMVERTICES-1)*sizeof(int),cudaMemcpyDefault);
+    cudaMemcpy(R3D,r3,(NUMVERTICES-1)*sizeof(int),cudaMemcpyDefault);
+    cudaMemcpy(T1D,T1weights,numBloques*sizeof(int),cudaMemcpyDefault);
+    cudaMemcpy(T2D,T2indexes,numBloques*sizeof(int),cudaMemcpyDefault);
     cudaMemcpy(CD,&c,sizeof(int),cudaMemcpyDefault);
 
     //INICIO LOOP |NUMVERTICES|-1 VECES
 
     //3)Ejecutar kernel
     //INVOQUE KERNEL 1 AND WRITE RESULTS IN T1 AND T2
-    kernel1<<<bloques, hilos>>>(VGD,VED,R1D,R2D,R3D,CD,T1weights,T2indexes);
+    kernel1<<<bloques, hilos>>>(VGD,VED,R1D,R2D,R3D,CD,T1D,T2D);
 
     //4)Copiar datos del device al host
     //T1 Y T2
     
 
-    //Verificar si se invica a Kernel 2
+    //Verificar si se inicia al Kernel 2
     if(numBloques > 1)
     {
         printf("Invoke Kernel2\n");
@@ -360,8 +384,14 @@ void primMST(int *v, int *e, int *r1, int * r2, int *r3, int c)
     // Valores de T1[0] y T2[0] son añadidos
     // a los correspondientes R1 Y R3
     //T2[0] sobreescribe a C
+    cudaMemcpy(T1weights,T1D,numBloques*sizeof(int),cudaMemcpyDefault);
+    cudaMemcpy(T2indexes,T2D,numBloques*sizeof(int),cudaMemcpyDefault);
     //---------------
-    printf("Minimum weight found: %i for vertex with ID: %i \n", T1weights[0], T2indexes[0]);
+    printf("\n Minimum weight found for each block \n");
+    printf("Id: \n");
+    printArrayRange(T2indexes,0,numBloques-1);
+    printf("Weight: \n");
+    printArrayRange(T1weights,0,numBloques-1);
     //---------------
 
     //FIN LOOP |NUMVERTICES|-1 VECES
@@ -372,6 +402,8 @@ void primMST(int *v, int *e, int *r1, int * r2, int *r3, int c)
     cudaFree(R1D);
     cudaFree(R2D);
     cudaFree(R3D);
+    cudaFree(T1D);
+    cudaFree(T2D);
     cudaFree(CD);
 
     cudaEventRecord(stop, 0); 
@@ -385,7 +417,7 @@ int main(int argc, char **argv)
     setGraph();
     
     //Set root vertex of the MST
-    C = 4;
+    C = 0;
 
     setVariables();
 
@@ -394,9 +426,9 @@ int main(int argc, char **argv)
     printf("\n");
 
     //---------------
-    printf("Minimum weight found: %i for vertex with ID: %i \n", T1weights[0], T2indexes[0]);
+    //printf("Minimum weight found: %i for vertex with ID: %i \n", T1weights[0], T2indexes[0]);
     //---------------
 
-    printf("Fin del programa V1\n");
+    printf("Fin del programa V2\n");
 
 }//Fin del main
