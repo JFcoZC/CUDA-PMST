@@ -5,7 +5,7 @@
 
 //NUMERO BLOQUES = INTEGERMASALTO(NUMVERTICES/MAXTRHEADSXBLOCK)
 //VARIABLES GLOBALES
-#define NUMVERTICES 32      //MAXIMUM 300
+#define NUMVERTICES 300      //MAXIMUM 300
 #define MAXTRHEADSXBLOCK 32 //[1 - 32]
 
 //ID gpudevice that is used
@@ -147,10 +147,10 @@ void setGraph()
     }//Fin for 2
 
     //----------------
-    printf("-- Destination vertex --\n");
-    printArrayRange(EG,0,numberEdges-1);
-    printf("-- Weigth of Edge --\n");
-    printArrayRange(EG,numberEdges,(numberEdges*2)-1);
+    //printf("-- Destination vertex --\n");
+    //printArrayRange(EG,0,numberEdges-1);
+    //printf("-- Weigth of Edge --\n");
+    //printArrayRange(EG,numberEdges,(numberEdges*2)-1);
     //----------------
 
 }//Fin funcion setGraph
@@ -291,7 +291,33 @@ __global__ void kernel1(int *v, int *e, int *r1, int *r2, int *r3, int *c, int *
     //2)All threads in every block make reduction of the result data in 1)
     //And obtain the minim value and index of every thread block
 
-}//End ufnction kernel1
+}//End function kernel1
+//--------------------------------
+__global__ void kernel2(int *numBlocks, int *weights, int *indxs)
+{
+    int N = numBlocks[0];
+
+    //Reservar espacio en zona de memoria compartida
+    __shared__ int temporal[MAXTRHEADSXBLOCK];
+
+    //Indice de cada hilo en un solo bloque
+    int i = threadIdx.x;
+    
+    if(i < N)
+    {
+        //Copiamos el vector de pesos en temporal y sincronizamos
+        temporal[i] = weights[i];
+        __syncthreads();
+
+        //---------------------
+        printf("|%i)  %i : %i | ", i ,weights[i], indxs[i]);
+        //printf("| %i | ", weights[0]);
+        //----------------------
+
+    }//End if
+
+
+}//End function kernel2
 //--------------------------------
 void primMST(int *v, int *e, int *r1, int * r2, int *r3, int c)
 {
@@ -373,14 +399,6 @@ void primMST(int *v, int *e, int *r1, int * r2, int *r3, int c)
     //4)Copiar datos del device al host
     //T1 Y T2
     
-
-    //Verificar si se inicia al Kernel 2
-    if(numBloques > 1)
-    {
-        printf("Invoke Kernel2\n");
-
-    }//End if
-
     // Valores de T1[0] y T2[0] son añadidos
     // a los correspondientes R1 Y R3
     //T2[0] sobreescribe a C
@@ -394,7 +412,39 @@ void primMST(int *v, int *e, int *r1, int * r2, int *r3, int c)
     printArrayRange(T1weights,0,numBloques-1);
     //---------------
 
+    //Verificar si se inicia al Kernel 2
+    //MAXTRHEADSXBLOCK > numBloques > 1
+    if(numBloques > 1)
+    {
+        //Definir variable en device
+        int *NBD;
+
+        //1)Asinar memoria para vairable en GPU/device
+        cudaMalloc(&NBD, int(sizeof(int)) );
+
+        //2)Copiar datos del host al device
+        //cudaMemcpy(T1D,T1weights,numBloques*sizeof(int),cudaMemcpyDefault);
+        //cudaMemcpy(T2D,T2indexes,numBloques*sizeof(int),cudaMemcpyDefault);
+        cudaMemcpy(NBD,&numBloques,sizeof(int),cudaMemcpyDefault);
+
+        //3)ejecutar kermel2
+        printf("Invoke Kernel2\n");
+        kernel2<<<1,hilos>>>(NBD,T1D,T2D);
+
+        //4)Copiar datos del device al host
+        cudaMemcpy(T1weights,T1D,numBloques*sizeof(int),cudaMemcpyDefault);
+        cudaMemcpy(T2indexes,T2D,numBloques*sizeof(int),cudaMemcpyDefault);
+
+        //5)liberar memoria
+
+    }//End if
+
+    //---------------
+    printf("Minimum weight found: %i for vertex with ID: %i \n", T1weights[0], T2indexes[0]);
+    //---------------
+
     //FIN LOOP |NUMVERTICES|-1 VECES
+
 
     //5) Liberar Memoria
     cudaFree(VGD);
@@ -425,10 +475,7 @@ int main(int argc, char **argv)
     primMST(VG,EG,R1source,R2destination,R3weigth,C);
     printf("\n");
 
-    //---------------
-    //printf("Minimum weight found: %i for vertex with ID: %i \n", T1weights[0], T2indexes[0]);
-    //---------------
 
-    printf("Fin del programa V2\n");
+    printf("Fin del programa V3\n");
 
 }//Fin del main
