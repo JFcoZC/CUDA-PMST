@@ -325,6 +325,8 @@ __global__ void kernel2(int *numBlocks, int *weights, int *indxs)
             //Solo trabajan la mitad de los hilos
             if(i < salto)
             {
+                //Si se encuentra un vertex con peso menor se elige
+                //como mejor candidato
                 if( temporal[i+salto] < temporal[i] && temporal[i] != 0 )
                 {
                     temporal[i] = temporal[i+salto];
@@ -351,6 +353,86 @@ __global__ void kernel2(int *numBlocks, int *weights, int *indxs)
 
 }//End function kernel2
 //--------------------------------
+//Comparing and update MST
+__global__ void kernel3(int *v, int *e, int *r1, int *r3, int *c, int *numEdges)
+{
+    //1)Read current Vertex index
+
+    //2)Fin the weight between current vertex and the
+    //other vertices (n other Vertex in actual moment)
+
+    //For every Vertex n if new weight with this C vertex is < old weight
+    // Adjust corresponding values of R1 and R3 by :
+    //if(W[n] < R3[n] )
+    //R1[n] = C
+    //R3[n] = W[n]
+
+    //Look for the actual weights in VE and VG
+    //for the source and destination and in case
+    //of not being found asign 0 as the weight
+    int NE = numEdges[0];
+    int C = c[0];
+    int numDestinations = v[C+NUMVERTICES];
+
+    int startIndex = 0;
+    for(int k = 0; k < C; k++)
+    {
+        startIndex = startIndex+v[k+NUMVERTICES];
+    }//End for
+
+    numDestinations = numDestinations+startIndex;
+
+    //----------
+    //printf("Range of values in EG(%i - %i)\n", startIndex, numDestinations);
+    //----------
+
+    int idBloque = blockIdx.x;
+    //ID de cada hilo (IDHILOBLOQUE+IDBLOQUE*HILOSPORBLOQUE)
+    int i = threadIdx.x + idBloque*blockDim.x;
+    
+    //Set by default all the edges taking as the origin 
+    //the root source, to all posible destinations
+    int indxValidDestinations = -1;
+    if(i < NUMVERTICES)
+    {
+
+        //Only do not take as destination when source
+        //and destination are equal
+        if(C != i)
+        {
+            indxValidDestinations++;
+
+            //Recorrer solamente los destinos para el source
+            for(int j = startIndex; j < numDestinations; j++)
+            {
+                int idDestino = e[j];
+
+                //Se encontro el destino .:. poner peso correspondiente
+                //----------
+                //printf("%i == %i\n", idDestino, i);
+                //----------
+                if(idDestino == i)
+                {
+
+                    if(e[j+NE] < r3[indxValidDestinations])
+                    {
+                        r3[indxValidDestinations] = e[j+NE];
+                        r1[indxValidDestinations] = C;
+
+                    }//End if
+
+                }//End if
+
+            }//End for 2
+
+        }//End if
+
+
+    }//Fin for 1
+    
+
+}//End function kernel3
+//--------------------------------
 void primMST(int *v, int *e, int *r1, int * r2, int *r3, int c)
 {
     //Define size of CUDA grid
@@ -369,7 +451,7 @@ void primMST(int *v, int *e, int *r1, int * r2, int *r3, int c)
     //vARIABLES IN DEVICE
     int *VGD, *VED, *R1D, *R2D, *R3D;   //Arrays
     int *T1D, *T2D;
-    int *CD;                            //Variable 
+    int *CD, *NED;                      //Variables 
 
     //Define and construct T1 and T2? HERE
     T1weights = (int *)calloc(numBloques,numBloques*sizeof(int));
@@ -411,76 +493,127 @@ void primMST(int *v, int *e, int *r1, int * r2, int *r3, int c)
     cudaMalloc(&T1D, (numBloques)*sizeof(int) );
     cudaMalloc(&T2D, (numBloques)*sizeof(int) );
     cudaMalloc(&CD, int(sizeof(int)) );
+    cudaMalloc(&NED, int(sizeof(int)) );
 
-    //2)Copiar datos del host al device
-    cudaMemcpy(VGD,v,NUMVERTICES*2*sizeof(int),cudaMemcpyDefault);
-    cudaMemcpy(VED,e,NUMBEREDGES*2*sizeof(int),cudaMemcpyDefault);
-    cudaMemcpy(R1D,r1,(NUMVERTICES-1)*sizeof(int),cudaMemcpyDefault);
-    cudaMemcpy(R2D,r2,(NUMVERTICES-1)*sizeof(int),cudaMemcpyDefault);
-    cudaMemcpy(R3D,r3,(NUMVERTICES-1)*sizeof(int),cudaMemcpyDefault);
-    cudaMemcpy(T1D,T1weights,numBloques*sizeof(int),cudaMemcpyDefault);
-    cudaMemcpy(T2D,T2indexes,numBloques*sizeof(int),cudaMemcpyDefault);
-    cudaMemcpy(CD,&c,sizeof(int),cudaMemcpyDefault);
 
     //INICIO LOOP |NUMVERTICES|-1 VECES
+    int iCountVer = 0;
 
-    //3)Ejecutar kernel
-    //INVOQUE KERNEL 1 AND WRITE RESULTS IN T1 AND T2
-    kernel1<<<bloques, hilos>>>(VGD,VED,R1D,R2D,R3D,CD,T1D,T2D);
-
-    //4)Copiar datos del device al host
-    //T1 Y T2
-    
-    // Valores de T1[0] y T2[0] son añadidos
-    // a los correspondientes R1 Y R3
-    //T2[0] sobreescribe a C
-    cudaMemcpy(T1weights,T1D,numBloques*sizeof(int),cudaMemcpyDefault);
-    cudaMemcpy(T2indexes,T2D,numBloques*sizeof(int),cudaMemcpyDefault);
-    //---------------
-    printf("\n Minimum weight found for each block (Global memory reduction) \n");
-    printf("Id: \n");
-    printArrayRange(T2indexes,0,numBloques-1);
-    printf("Weight: \n");
-    printArrayRange(T1weights,0,numBloques-1);
-    //---------------
-
-    //Verificar si se inicia al Kernel 2
-    //MAXTRHEADSXBLOCK > numBloques > 1
-    if(numBloques > 1)
+    while(iCountVer < NUMVERTICES-1)
     {
-        //Definir variable en device
-        int *NBD;
-
-        //1)Asinar memoria para vairable en GPU/device
-        cudaMalloc(&NBD, int(sizeof(int)) );
+        //----
+        printf("---- %i) ----- \n", iCountVer);
+        printf("Current vertex: %i \n", c);
+        //----
 
         //2)Copiar datos del host al device
-        cudaMemcpy(NBD,&numBloques,sizeof(int),cudaMemcpyDefault);
+        cudaMemcpy(VGD,v,NUMVERTICES*2*sizeof(int),cudaMemcpyDefault);
+        cudaMemcpy(VED,e,NUMBEREDGES*2*sizeof(int),cudaMemcpyDefault);
+        cudaMemcpy(R1D,r1,(NUMVERTICES-1)*sizeof(int),cudaMemcpyDefault);
+        cudaMemcpy(R2D,r2,(NUMVERTICES-1)*sizeof(int),cudaMemcpyDefault);
+        cudaMemcpy(R3D,r3,(NUMVERTICES-1)*sizeof(int),cudaMemcpyDefault);
+        cudaMemcpy(T1D,T1weights,numBloques*sizeof(int),cudaMemcpyDefault);
+        cudaMemcpy(T2D,T2indexes,numBloques*sizeof(int),cudaMemcpyDefault);
+        cudaMemcpy(CD,&c,sizeof(int),cudaMemcpyDefault);
+        cudaMemcpy(NED,&NUMBEREDGES,sizeof(int),cudaMemcpyDefault);
 
-        //3)ejecutar kermel2
-        printf("Invoke Kernel2\n");
-        kernel2<<<1,hilos>>>(NBD,T1D,T2D);
+        //3)Ejecutar kernel
+        //INVOQUE KERNEL 1 AND WRITE RESULTS IN T1 AND T2
+        kernel1<<<bloques, hilos>>>(VGD,VED,R1D,R2D,R3D,CD,T1D,T2D);
 
         //4)Copiar datos del device al host
+        //T1 Y T2
+        
+        // Valores de T1[0] y T2[0] son añadidos
+        // a los correspondientes R1 Y R3
+        //T2[0] sobreescribe a C
         cudaMemcpy(T1weights,T1D,numBloques*sizeof(int),cudaMemcpyDefault);
         cudaMemcpy(T2indexes,T2D,numBloques*sizeof(int),cudaMemcpyDefault);
-
         //---------------
-        printf("\n 2) Minimum weight found of each block (After shared memory reduction) \n");
+        printf("\n Minimum weight found for each block (Global memory reduction) \n");
         printf("Id: \n");
         printArrayRange(T2indexes,0,numBloques-1);
         printf("Weight: \n");
         printArrayRange(T1weights,0,numBloques-1);
         //---------------
+
+        //Verificar si se inicia al Kernel 2
+        //MAXTRHEADSXBLOCK > numBloques > 1
+        if(numBloques > 1)
+        {
+            //Definir variable en device
+            int *NBD;
+
+            //1)Asinar memoria para vairable en GPU/device
+            cudaMalloc(&NBD, int(sizeof(int)) );
+
+            //2)Copiar datos del host al device
+            cudaMemcpy(NBD,&numBloques,sizeof(int),cudaMemcpyDefault);
+
+            //3)ejecutar kermel2
+            printf("Invoke Kernel2\n");
+            kernel2<<<1,hilos>>>(NBD,T1D,T2D);
+
+            //4)Copiar datos del device al host
+            cudaMemcpy(T1weights,T1D,numBloques*sizeof(int),cudaMemcpyDefault);
+            cudaMemcpy(T2indexes,T2D,numBloques*sizeof(int),cudaMemcpyDefault);
+
+            //---------------
+            printf("\n 2) Minimum weight found of each block (After shared memory reduction) \n");
+            printf("Id: \n");
+            printArrayRange(T2indexes,0,numBloques-1);
+            printf("Weight: \n");
+            printArrayRange(T1weights,0,numBloques-1);
+            //---------------
+            
+            //5)liberar memoria NBD
+
+        }//End if kernel2
+
+        //---------------
+        printf("Minimum weight found: %i for vertex with ID: %i \n", T1weights[0], T2indexes[0]);
+        //---------------
+
+        //ADDING NEW MST EDGE
+
+        //1)Add previously found minimum weight Edge (T1[0] WEIGHT T2[0] EDGE)
+        //to the MST by moving this Edge to the first position of R1 R2 R3
+        r2[0] = T2indexes[0];  //R2[C] ? 
+        r3[0] = T1weights[0];  //R3[C] ?
+
+        //2)Saving current Vertex C= R2[T2[0]]
+        c = r2[T2indexes[0]];
+
+        //Copiar datos del host al device que han sido modificados
+        cudaMemcpy(R2D,r2,(NUMVERTICES-1)*sizeof(int),cudaMemcpyDefault);
+        cudaMemcpy(R3D,r3,(NUMVERTICES-1)*sizeof(int),cudaMemcpyDefault);
+        cudaMemcpy(CD,&c,sizeof(int),cudaMemcpyDefault);
+
+        //Kernel 3: Comparing and updating MST
+        kernel3<<<bloques, hilos>>>(VGD,VED,R1D,R3D,CD,NED);
+
+        //Copiar datos del device al host
+        cudaMemcpy(r1,R1D,(NUMVERTICES-1)*sizeof(int),cudaMemcpyDefault);
+        cudaMemcpy(r3,R3D,(NUMVERTICES-1)*sizeof(int),cudaMemcpyDefault);
+
         
-        //5)liberar memoria NBD
+        //--------------
+        //Recordar que para el print se considera un elemento menos
+        //del limite superior ya que realmnete hace el print hasta
+        //la posicion indicada
+        printf("--- MST ACTUALIZADO ---: \n");
+        printf("R1: \n");
+        printArrayRange(r1,0,NUMVERTICES-2);
+        printf("R2: \n");
+        printArrayRange(r2,0,NUMVERTICES-2);
+        printf("R3: \n");
+        printArrayRange(r3,0,NUMVERTICES-2);
+        //--------------
 
-    }//End if kernel2
+        iCountVer++;
 
-    //---------------
-    printf("Minimum weight found: %i for vertex with ID: %i \n", T1weights[0], T2indexes[0]);
-    //---------------
-
+    }//End while
+    
     //FIN LOOP |NUMVERTICES|-1 VECES
 
 
@@ -493,6 +626,7 @@ void primMST(int *v, int *e, int *r1, int * r2, int *r3, int c)
     cudaFree(T1D);
     cudaFree(T2D);
     cudaFree(CD);
+    cudaFree(NED);
 
     cudaEventRecord(stop, 0); 
     cudaEventSynchronize(stop);
