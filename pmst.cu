@@ -299,6 +299,7 @@ __global__ void kernel2(int *numBlocks, int *weights, int *indxs)
 
     //Reservar espacio en zona de memoria compartida
     __shared__ int temporal[MAXTRHEADSXBLOCK];
+    __shared__ int tempids[MAXTRHEADSXBLOCK];
 
     //Indice de cada hilo en un solo bloque
     int i = threadIdx.x;
@@ -307,14 +308,45 @@ __global__ void kernel2(int *numBlocks, int *weights, int *indxs)
     {
         //Copiamos el vector de pesos en temporal y sincronizamos
         temporal[i] = weights[i];
+        tempids[i] = indxs[i];
         __syncthreads();
 
         //---------------------
-        printf("|%i)  %i : %i | ", i ,weights[i], indxs[i]);
-        //printf("| %i | ", weights[0]);
+        //printf("|%i)  %i : %i | ", i ,weights[i], indxs[i]);
+        //printf("| %i | ", temporal[i]);
         //----------------------
 
-    }//End if
+        //Inicio de reduccion paralela
+        int salto = N/2;
+
+        //log2(N) iteraciones
+        while(salto)
+        {
+            //Solo trabajan la mitad de los hilos
+            if(i < salto)
+            {
+                if( temporal[i+salto] < temporal[i] && temporal[i] != 0 )
+                {
+                    temporal[i] = temporal[i+salto];
+                    tempids[i] = tempids[i+salto];
+
+                }//End if
+
+            }//End if 2
+            __syncthreads();
+            salto = salto/2;
+
+        }//End while
+
+        //Hilo 0 escibe el resultado final en memoria global
+        if(i == 0)
+        {
+            weights[0] = temporal[0];
+            indxs[0] = tempids[0];
+
+        }//End if 2
+
+    }//End if 1 
 
 
 }//End function kernel2
@@ -405,7 +437,7 @@ void primMST(int *v, int *e, int *r1, int * r2, int *r3, int c)
     cudaMemcpy(T1weights,T1D,numBloques*sizeof(int),cudaMemcpyDefault);
     cudaMemcpy(T2indexes,T2D,numBloques*sizeof(int),cudaMemcpyDefault);
     //---------------
-    printf("\n Minimum weight found for each block \n");
+    printf("\n Minimum weight found for each block (Global memory reduction) \n");
     printf("Id: \n");
     printArrayRange(T2indexes,0,numBloques-1);
     printf("Weight: \n");
@@ -423,8 +455,6 @@ void primMST(int *v, int *e, int *r1, int * r2, int *r3, int c)
         cudaMalloc(&NBD, int(sizeof(int)) );
 
         //2)Copiar datos del host al device
-        //cudaMemcpy(T1D,T1weights,numBloques*sizeof(int),cudaMemcpyDefault);
-        //cudaMemcpy(T2D,T2indexes,numBloques*sizeof(int),cudaMemcpyDefault);
         cudaMemcpy(NBD,&numBloques,sizeof(int),cudaMemcpyDefault);
 
         //3)ejecutar kermel2
@@ -435,9 +465,17 @@ void primMST(int *v, int *e, int *r1, int * r2, int *r3, int c)
         cudaMemcpy(T1weights,T1D,numBloques*sizeof(int),cudaMemcpyDefault);
         cudaMemcpy(T2indexes,T2D,numBloques*sizeof(int),cudaMemcpyDefault);
 
-        //5)liberar memoria
+        //---------------
+        printf("\n 2) Minimum weight found of each block (After shared memory reduction) \n");
+        printf("Id: \n");
+        printArrayRange(T2indexes,0,numBloques-1);
+        printf("Weight: \n");
+        printArrayRange(T1weights,0,numBloques-1);
+        //---------------
+        
+        //5)liberar memoria NBD
 
-    }//End if
+    }//End if kernel2
 
     //---------------
     printf("Minimum weight found: %i for vertex with ID: %i \n", T1weights[0], T2indexes[0]);
@@ -467,7 +505,7 @@ int main(int argc, char **argv)
     setGraph();
     
     //Set root vertex of the MST
-    C = 0;
+    C = 2;
 
     setVariables();
 
@@ -476,6 +514,6 @@ int main(int argc, char **argv)
     printf("\n");
 
 
-    printf("Fin del programa V3\n");
+    printf("Fin del programa V4\n");
 
 }//Fin del main
