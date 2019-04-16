@@ -5,7 +5,7 @@
 
 //NUMERO BLOQUES = INTEGERMASALTO(NUMVERTICES/MAXTRHEADSXBLOCK)
 //VARIABLES GLOBALES
-#define NUMVERTICES 300      //MAXIMUM 300
+#define NUMVERTICES 5      //MAXIMUM 300
 #define MAXTRHEADSXBLOCK 32 //[1 - 32]
 
 //ID gpudevice that is used
@@ -28,6 +28,34 @@ int *T1weights;
 int *T2indexes;
 
 //------- FUNCIONES --------
+void writeFile(char* filename, char* content)
+{
+	FILE *fp;
+	int error;
+	
+	//Open a text file for append stream to the end
+	//If there is no file, it is created
+	fp = fopen(filename,"a+");
+	
+
+	//Write content
+	error = fputs(content,fp);
+	if( error  == EOF )
+	{
+		printf("Error al escribir en archivo!\n");
+		printf("ERROR: %i = %s\n", error ,strerror(error));
+		//clearerr(fp);
+		//fflush(stdout);
+		//Llamada recursiva para ver si ya se hace la escritura sin error
+		//writeFile(filename,content);
+		
+	}//Fin if 1
+	
+	//Cerrar archivo
+	fclose(fp);
+	
+}//Fin writeFile
+//--------------------------------------------------------------
 void printDoubleArray(int *VX)
 {
     int lengthArray = NUMVERTICES;
@@ -147,10 +175,10 @@ void setGraph()
     }//Fin for 2
 
     //----------------
-    //printf("-- Destination vertex --\n");
-    //printArrayRange(EG,0,numberEdges-1);
-    //printf("-- Weigth of Edge --\n");
-    //printArrayRange(EG,numberEdges,(numberEdges*2)-1);
+    printf("-- Destination vertex --\n");
+    printArrayRange(EG,0,numberEdges-1);
+    printf("-- Weigth of Edge --\n");
+    printArrayRange(EG,numberEdges,(numberEdges*2)-1);
     //----------------
 
 }//Fin funcion setGraph
@@ -630,6 +658,26 @@ void primMST(int *v, int *e, int *r1, int * r2, int *r3, int c)
 
     cudaEventRecord(stop, 0); 
     cudaEventSynchronize(stop);
+
+    float milliseconds = 0;
+    char strvertices[10];
+	char strtottime[15];
+
+    cudaEventElapsedTime(&milliseconds, start, stop);
+
+    //--- Escribir resultados en archivo txt ---
+    //Convertir entero de numero de procesadores a cadena
+    //Convertir int to char itoa(stringDestination,"%d",intValue)
+    sprintf(strvertices,"%d",NUMVERTICES); 
+    
+    //Convert double to string
+    sprintf(strtottime,"%f",milliseconds);
+
+    //Append en archivo de resultados
+    writeFile("resultados.txt",strvertices);
+    writeFile("resultados.txt"," ");
+    writeFile("resultados.txt",strtottime);
+    writeFile("resultados.txt","\n");
 
 }//En function primMST
 //---- FIN FUNCIONES -----
